@@ -396,7 +396,11 @@ export class BaileysSessionManager extends EventEmitter {
         // Handle chat history and new chats
         socket.ev.on("chats.upsert", (newChats) => {
             for (const chat of newChats) {
-                if (!isJidBroadcast(chat.id) && !chat.id.endsWith("@g.us")) {
+                if (chat.id &&
+                    !isJidBroadcast(chat.id) &&
+                    !chat.id.includes("@g.us") &&
+                    !chat.id.includes("@newsletter") &&
+                    chat.id.includes("@s.whatsapp.net")) {
                     session.chats.set(chat.id, chat.name || chat.id.split("@")[0]);
                 }
             }
@@ -405,7 +409,9 @@ export class BaileysSessionManager extends EventEmitter {
             for (const update of updates) {
                 if (update.id &&
                     !isJidBroadcast(update.id) &&
-                    !update.id.endsWith("@g.us")) {
+                    !update.id.includes("@g.us") &&
+                    !update.id.includes("@newsletter") &&
+                    update.id.includes("@s.whatsapp.net")) {
                     if (update.name) {
                         session.chats.set(update.id, update.name);
                     }
@@ -416,7 +422,9 @@ export class BaileysSessionManager extends EventEmitter {
             for (const contact of contacts) {
                 if (contact.id &&
                     !isJidBroadcast(contact.id) &&
-                    !contact.id.endsWith("@g.us")) {
+                    !contact.id.includes("@g.us") &&
+                    !contact.id.includes("@newsletter") &&
+                    contact.id.includes("@s.whatsapp.net")) {
                     // Only update if we have a real name, don't overwrite with just the number
                     if (contact.name || contact.notify) {
                         session.chats.set(contact.id, contact.name || contact.notify || contact.id.split("@")[0]);
@@ -426,14 +434,20 @@ export class BaileysSessionManager extends EventEmitter {
         });
         socket.ev.on("messaging-history.set", ({ chats, contacts }) => {
             for (const chat of chats) {
-                if (!isJidBroadcast(chat.id) && !chat.id.endsWith("@g.us")) {
+                if (chat.id &&
+                    !isJidBroadcast(chat.id) &&
+                    !chat.id.includes("@g.us") &&
+                    !chat.id.includes("@newsletter") &&
+                    chat.id.includes("@s.whatsapp.net")) {
                     session.chats.set(chat.id, chat.name || chat.id.split("@")[0]);
                 }
             }
             for (const contact of contacts) {
                 if (contact.id &&
                     !isJidBroadcast(contact.id) &&
-                    !contact.id.endsWith("@g.us")) {
+                    !contact.id.includes("@g.us") &&
+                    !contact.id.includes("@newsletter") &&
+                    contact.id.includes("@s.whatsapp.net")) {
                     if (contact.name || contact.notify) {
                         session.chats.set(contact.id, contact.name || contact.notify || contact.id.split("@")[0]);
                     }
@@ -520,9 +534,14 @@ export class BaileysSessionManager extends EventEmitter {
         const result = [];
         for (const [jid, name] of session.chats.entries()) {
             // Basic phone extraction (removes @s.whatsapp.net)
-            if (!jid.endsWith("@g.us")) {
+            // Strictly ignore groups (@g.us), newsletters (@newsletter), broadcasts (@broadcast), etc.
+            if (!jid.includes("@g.us") &&
+                !jid.includes("@newsletter") &&
+                !jid.includes("@broadcast") &&
+                jid.includes("@s.whatsapp.net")) {
                 const phone = jid.split("@")[0];
-                if (phone && phone.length > 5) {
+                // Ensure the phone is strictly numeric and has a reasonable length (10-20 digits)
+                if (phone && /^\d{10,20}$/.test(phone)) {
                     result.push({ phone, name });
                 }
             }
@@ -551,6 +570,7 @@ export class BaileysSessionManager extends EventEmitter {
             return false;
         }
         this.logger.info(`Closing session ${sessionId}`);
+        console.trace(`closeSession called for ${sessionId}`);
         session.isClosing = true;
         if (session.socket) {
             try {

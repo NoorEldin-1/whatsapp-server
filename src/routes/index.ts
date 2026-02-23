@@ -565,7 +565,7 @@ router.get(
   "/api/:session/chats",
   extractSession,
   verifyToken,
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const session = (req as any).sessionName;
 
     try {
@@ -578,7 +578,20 @@ router.get(
         return;
       }
 
-      const chats = sessionManager.getChats(session);
+      let chats = sessionManager.getChats(session);
+
+      // If chats are empty, attempt to force an active sync using app-state
+      if (chats.length === 0 && sessionInfo.socket) {
+        try {
+          console.log(
+            `[Chats] Forcing chat fetch for empty session ${session}`,
+          );
+          await sessionManager.forceFetchChats(session);
+          chats = sessionManager.getChats(session);
+        } catch (e) {
+          console.log(`[Chats] Failed to force fetch: `, e);
+        }
+      }
 
       res.json({
         status: "success",

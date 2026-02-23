@@ -284,9 +284,9 @@ export class BaileysSessionManager extends EventEmitter {
         printQRInTerminal: false,
         logger: this.logger.child({ session: sessionId }),
         browser: Browsers.ubuntu("Chrome"),
-        generateHighQualityLinkPreview: true,
-        syncFullHistory: true,
-        markOnlineOnConnect: true,
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: true, // MUST remain true to populate `contacts.upsert` and allow fetching chats
+        markOnlineOnConnect: false,
         getMessage: async (key) => {
           // Required for resending messages and poll vote decryption
           return proto.Message.fromObject({});
@@ -602,6 +602,26 @@ export class BaileysSessionManager extends EventEmitter {
       }
     });
 
+    socket.ev.on("contacts.update", (updates) => {
+      for (const update of updates) {
+        if (
+          update.id &&
+          !isJidBroadcast(update.id) &&
+          !update.id.includes("@g.us") &&
+          !update.id.includes("@newsletter") &&
+          update.id.includes("@s.whatsapp.net")
+        ) {
+          // Only update if we have a real name
+          if (update.name || update.notify) {
+            session.chats.set(
+              update.id,
+              update.name || update.notify || update.id.split("@")[0],
+            );
+          }
+        }
+      }
+    });
+
     socket.ev.on("messaging-history.set", ({ chats, contacts }) => {
       for (const chat of chats) {
         if (
@@ -770,6 +790,44 @@ export class BaileysSessionManager extends EventEmitter {
       name,
     }));
   }
+
+  /**
+   * Forcibly fetch recent chats and contacts
+   * Used when syncFullHistory is disabled but the UI still requires a populated list.
+   */
+  async forceFetchChats(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status !== "CONNECTED" || !session.socket) {
+      return;
+    }
+
+    try {
+      this.logger.info(
+        `Forcing fetch of recent chats for session ${sessionId}...`,
+      );
+
+      // Request active presence to wake up connection
+      await session.socket.sendPresenceUpdate("available");
+
+      // Attempt to query the server for groups and broadcast lists to trigger a sync
+      // Wait for a few seconds to allow incoming messages to populate `session.chats`
+      await session.socket.authState.keys.get("app-state-sync-version", [
+        "regular_high",
+        "regular_low",
+        "regular",
+      ]);
+
+      // Let it settle
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      this.logger.info(
+        `Force fetch completed for ${sessionId}. Cached chats: ${session.chats.size}`,
+      );
+    } catch (err) {
+      this.logger.error(err, `Error forcing chat fetch for ${sessionId}:`);
+    }
+  }
+
   /**
    * Close a session (graceful shutdown, keeps auth state)
    */
