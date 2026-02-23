@@ -162,6 +162,32 @@ router.post(
 // ============================================================================
 
 /**
+ * Get active chats for a session
+ * GET /api/:session/chats
+ */
+router.get(
+  "/api/:session/chats",
+  extractSession,
+  verifyToken,
+  (req: Request, res: Response) => {
+    const session = (req as any).sessionName;
+    try {
+      const chats = sessionManager.getChats(session);
+      res.json({
+        status: "success",
+        response: chats,
+      });
+    } catch (error) {
+      console.error(`[Session] Get chats error:`, error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to get chats",
+      });
+    }
+  },
+);
+
+/**
  * Start a session and get QR code if needed
  * POST /api/:session/start-session
  */
@@ -521,6 +547,48 @@ router.post(
       res.status(500).json({
         status: false,
         message: "Error during logout",
+        error: String(error),
+      });
+    }
+  },
+);
+
+// ============================================================================
+// CHATS ROUTES
+// ============================================================================
+
+/**
+ * Get active chats
+ * GET /api/:session/chats
+ */
+router.get(
+  "/api/:session/chats",
+  extractSession,
+  verifyToken,
+  (req: Request, res: Response) => {
+    const session = (req as any).sessionName;
+
+    try {
+      const sessionInfo = sessionManager.getSession(session);
+      if (!sessionInfo || sessionInfo.status !== "CONNECTED") {
+        res.status(404).json({
+          status: "error",
+          message: "Session is not connected",
+        });
+        return;
+      }
+
+      const chats = sessionManager.getChats(session);
+
+      res.json({
+        status: "success",
+        response: chats,
+      });
+    } catch (error: any) {
+      console.error(`[Chats] Get error:`, error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to get chats",
         error: String(error),
       });
     }

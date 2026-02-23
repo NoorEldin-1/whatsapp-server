@@ -27,6 +27,7 @@ export interface SessionInfo {
     phoneNumber: string | null;
     lastActivity: number;
     isClosing: boolean;
+    chats: Map<string, string>;
 }
 /**
  * Session events for external listeners
@@ -97,9 +98,16 @@ export declare class BaileysSessionManager extends EventEmitter {
      */
     getAllSessions(): Map<string, SessionInfo>;
     /**
-     * Get count of active sessions
+     * Get active session count
      */
     getActiveSessionCount(): number;
+    /**
+     * Get formatted chats for a session
+     */
+    getChats(sessionId: string): Array<{
+        phone: string;
+        name: string;
+    }>;
     /**
      * Close a session (graceful shutdown, keeps auth state)
      */

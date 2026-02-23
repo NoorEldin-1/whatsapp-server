@@ -21,3 +21,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+/auth_sessions
+/session-info
+tokens.json
+tokens.json

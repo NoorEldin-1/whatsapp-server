@@ -55,6 +55,7 @@ export interface SessionInfo {
   phoneNumber: string | null;
   lastActivity: number;
   isClosing: boolean;
+  chats: Map<string, string>; // Maps JID to Name
 }
 
 /**
@@ -222,7 +223,46 @@ export class BaileysSessionManager extends EventEmitter {
       phoneNumber: null,
       lastActivity: Date.now(),
       isClosing: false,
+      chats: new Map<string, string>(),
     };
+
+    // Initialize custom chats cache from chats.json
+    const chatsPath = path.join(sessionDir, "chats.json");
+    try {
+      if (fs.existsSync(chatsPath)) {
+        const data = fs.readFileSync(chatsPath, "utf8");
+        const parsed = JSON.parse(data);
+        for (const [jid, name] of Object.entries(parsed)) {
+          sessionInfo.chats.set(jid, name as string);
+        }
+        this.logger.info(
+          `Loaded ${sessionInfo.chats.size} chats from cache for ${sessionId}`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(err, `Failed to load chats cache for ${sessionId}:`);
+    }
+
+    // Save chats map periodically
+    const storeInterval = setInterval(() => {
+      if (
+        sessionInfo.status === "CONNECTED" ||
+        sessionInfo.status === "CLOSED"
+      ) {
+        try {
+          const obj = Object.fromEntries(sessionInfo.chats);
+          fs.writeFileSync(chatsPath, JSON.stringify(obj));
+        } catch (err) {
+          // ignore
+        }
+      }
+      if (
+        sessionInfo.status === "CLOSED" ||
+        sessionInfo.status === "DISCONNECTED"
+      ) {
+        clearInterval(storeInterval);
+      }
+    }, 10000);
 
     this.sessions.set(sessionId, sessionInfo);
     this.emit("status", sessionId, "INITIALIZING");
@@ -245,7 +285,7 @@ export class BaileysSessionManager extends EventEmitter {
         logger: this.logger.child({ session: sessionId }),
         browser: Browsers.ubuntu("Chrome"),
         generateHighQualityLinkPreview: true,
-        syncFullHistory: false,
+        syncFullHistory: true,
         markOnlineOnConnect: true,
         getMessage: async (key) => {
           // Required for resending messages and poll vote decryption
@@ -510,6 +550,87 @@ export class BaileysSessionManager extends EventEmitter {
         session.lastActivity = Date.now();
       }
     });
+
+    // Handle chat history and new chats
+    socket.ev.on("chats.upsert", (newChats) => {
+      for (const chat of newChats) {
+        if (
+          chat.id &&
+          !isJidBroadcast(chat.id) &&
+          !chat.id.includes("@g.us") &&
+          !chat.id.includes("@newsletter") &&
+          chat.id.includes("@s.whatsapp.net")
+        ) {
+          session.chats.set(chat.id, chat.name || chat.id.split("@")[0]);
+        }
+      }
+    });
+
+    socket.ev.on("chats.update", (updates) => {
+      for (const update of updates) {
+        if (
+          update.id &&
+          !isJidBroadcast(update.id) &&
+          !update.id.includes("@g.us") &&
+          !update.id.includes("@newsletter") &&
+          update.id.includes("@s.whatsapp.net")
+        ) {
+          if (update.name) {
+            session.chats.set(update.id, update.name);
+          }
+        }
+      }
+    });
+
+    socket.ev.on("contacts.upsert", (contacts) => {
+      for (const contact of contacts) {
+        if (
+          contact.id &&
+          !isJidBroadcast(contact.id) &&
+          !contact.id.includes("@g.us") &&
+          !contact.id.includes("@newsletter") &&
+          contact.id.includes("@s.whatsapp.net")
+        ) {
+          // Only update if we have a real name, don't overwrite with just the number
+          if (contact.name || contact.notify) {
+            session.chats.set(
+              contact.id,
+              contact.name || contact.notify || contact.id.split("@")[0],
+            );
+          }
+        }
+      }
+    });
+
+    socket.ev.on("messaging-history.set", ({ chats, contacts }) => {
+      for (const chat of chats) {
+        if (
+          chat.id &&
+          !isJidBroadcast(chat.id) &&
+          !chat.id.includes("@g.us") &&
+          !chat.id.includes("@newsletter") &&
+          chat.id.includes("@s.whatsapp.net")
+        ) {
+          session.chats.set(chat.id, chat.name || chat.id.split("@")[0]);
+        }
+      }
+      for (const contact of contacts) {
+        if (
+          contact.id &&
+          !isJidBroadcast(contact.id) &&
+          !contact.id.includes("@g.us") &&
+          !contact.id.includes("@newsletter") &&
+          contact.id.includes("@s.whatsapp.net")
+        ) {
+          if (contact.name || contact.notify) {
+            session.chats.set(
+              contact.id,
+              contact.name || contact.notify || contact.id.split("@")[0],
+            );
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -591,7 +712,7 @@ export class BaileysSessionManager extends EventEmitter {
   }
 
   /**
-   * Get count of active sessions
+   * Get active session count
    */
   getActiveSessionCount(): number {
     let count = 0;
@@ -604,6 +725,52 @@ export class BaileysSessionManager extends EventEmitter {
   }
 
   /**
+   * Get formatted chats for a session
+   */
+  getChats(sessionId: string): Array<{ phone: string; name: string }> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status !== "CONNECTED") {
+      return [];
+    }
+
+    const result: Array<{ phone: string; name: string }> = [];
+
+    for (const [jid, name] of session.chats.entries()) {
+      // Basic phone extraction (removes @s.whatsapp.net)
+      // Strictly ignore groups (@g.us), newsletters (@newsletter), broadcasts (@broadcast), etc.
+      if (
+        !jid.includes("@g.us") &&
+        !jid.includes("@newsletter") &&
+        !jid.includes("@broadcast") &&
+        jid.includes("@s.whatsapp.net")
+      ) {
+        const phone = jid.split("@")[0];
+        // Ensure the phone is strictly numeric and has a reasonable length (10-20 digits)
+        if (phone && /^\d{10,20}$/.test(phone)) {
+          result.push({ phone, name });
+        }
+      }
+    }
+
+    // Deduplicate by phone
+    const uniqueMap = new Map<string, string>();
+    for (const item of result) {
+      // Prefer real names over phone numbers
+      const existingName = uniqueMap.get(item.phone);
+      if (
+        !existingName ||
+        (existingName === item.phone && item.name !== item.phone)
+      ) {
+        uniqueMap.set(item.phone, item.name);
+      }
+    }
+
+    return Array.from(uniqueMap.entries()).map(([phone, name]) => ({
+      phone,
+      name,
+    }));
+  }
+  /**
    * Close a session (graceful shutdown, keeps auth state)
    */
   async closeSession(sessionId: string): Promise<boolean> {
@@ -613,6 +780,7 @@ export class BaileysSessionManager extends EventEmitter {
     }
 
     this.logger.info(`Closing session ${sessionId}`);
+    console.trace(`closeSession called for ${sessionId}`);
     session.isClosing = true;
 
     if (session.socket) {

@@ -140,7 +140,40 @@ export class BaileysSessionManager extends EventEmitter {
             phoneNumber: null,
             lastActivity: Date.now(),
             isClosing: false,
+            chats: new Map(),
         };
+        // Initialize custom chats cache from chats.json
+        const chatsPath = path.join(sessionDir, "chats.json");
+        try {
+            if (fs.existsSync(chatsPath)) {
+                const data = fs.readFileSync(chatsPath, "utf8");
+                const parsed = JSON.parse(data);
+                for (const [jid, name] of Object.entries(parsed)) {
+                    sessionInfo.chats.set(jid, name);
+                }
+                this.logger.info(`Loaded ${sessionInfo.chats.size} chats from cache for ${sessionId}`);
+            }
+        }
+        catch (err) {
+            this.logger.error(err, `Failed to load chats cache for ${sessionId}:`);
+        }
+        // Save chats map periodically
+        const storeInterval = setInterval(() => {
+            if (sessionInfo.status === "CONNECTED" ||
+                sessionInfo.status === "CLOSED") {
+                try {
+                    const obj = Object.fromEntries(sessionInfo.chats);
+                    fs.writeFileSync(chatsPath, JSON.stringify(obj));
+                }
+                catch (err) {
+                    // ignore
+                }
+            }
+            if (sessionInfo.status === "CLOSED" ||
+                sessionInfo.status === "DISCONNECTED") {
+                clearInterval(storeInterval);
+            }
+        }, 10000);
         this.sessions.set(sessionId, sessionInfo);
         this.emit("status", sessionId, "INITIALIZING");
         try {
@@ -158,7 +191,7 @@ export class BaileysSessionManager extends EventEmitter {
                 logger: this.logger.child({ session: sessionId }),
                 browser: Browsers.ubuntu("Chrome"),
                 generateHighQualityLinkPreview: true,
-                syncFullHistory: false,
+                syncFullHistory: true,
                 markOnlineOnConnect: true,
                 getMessage: async (key) => {
                     // Required for resending messages and poll vote decryption
@@ -360,6 +393,53 @@ export class BaileysSessionManager extends EventEmitter {
                 session.lastActivity = Date.now();
             }
         });
+        // Handle chat history and new chats
+        socket.ev.on("chats.upsert", (newChats) => {
+            for (const chat of newChats) {
+                if (!isJidBroadcast(chat.id) && !chat.id.endsWith("@g.us")) {
+                    session.chats.set(chat.id, chat.name || chat.id.split("@")[0]);
+                }
+            }
+        });
+        socket.ev.on("chats.update", (updates) => {
+            for (const update of updates) {
+                if (update.id &&
+                    !isJidBroadcast(update.id) &&
+                    !update.id.endsWith("@g.us")) {
+                    if (update.name) {
+                        session.chats.set(update.id, update.name);
+                    }
+                }
+            }
+        });
+        socket.ev.on("contacts.upsert", (contacts) => {
+            for (const contact of contacts) {
+                if (contact.id &&
+                    !isJidBroadcast(contact.id) &&
+                    !contact.id.endsWith("@g.us")) {
+                    // Only update if we have a real name, don't overwrite with just the number
+                    if (contact.name || contact.notify) {
+                        session.chats.set(contact.id, contact.name || contact.notify || contact.id.split("@")[0]);
+                    }
+                }
+            }
+        });
+        socket.ev.on("messaging-history.set", ({ chats, contacts }) => {
+            for (const chat of chats) {
+                if (!isJidBroadcast(chat.id) && !chat.id.endsWith("@g.us")) {
+                    session.chats.set(chat.id, chat.name || chat.id.split("@")[0]);
+                }
+            }
+            for (const contact of contacts) {
+                if (contact.id &&
+                    !isJidBroadcast(contact.id) &&
+                    !contact.id.endsWith("@g.us")) {
+                    if (contact.name || contact.notify) {
+                        session.chats.set(contact.id, contact.name || contact.notify || contact.id.split("@")[0]);
+                    }
+                }
+            }
+        });
     }
     /**
      * Persist session info to file (for retrieval after restart)
@@ -418,7 +498,7 @@ export class BaileysSessionManager extends EventEmitter {
         return this.sessions;
     }
     /**
-     * Get count of active sessions
+     * Get active session count
      */
     getActiveSessionCount() {
         let count = 0;
@@ -428,6 +508,39 @@ export class BaileysSessionManager extends EventEmitter {
             }
         }
         return count;
+    }
+    /**
+     * Get formatted chats for a session
+     */
+    getChats(sessionId) {
+        const session = this.sessions.get(sessionId);
+        if (!session || session.status !== "CONNECTED") {
+            return [];
+        }
+        const result = [];
+        for (const [jid, name] of session.chats.entries()) {
+            // Basic phone extraction (removes @s.whatsapp.net)
+            if (!jid.endsWith("@g.us")) {
+                const phone = jid.split("@")[0];
+                if (phone && phone.length > 5) {
+                    result.push({ phone, name });
+                }
+            }
+        }
+        // Deduplicate by phone
+        const uniqueMap = new Map();
+        for (const item of result) {
+            // Prefer real names over phone numbers
+            const existingName = uniqueMap.get(item.phone);
+            if (!existingName ||
+                (existingName === item.phone && item.name !== item.phone)) {
+                uniqueMap.set(item.phone, item.name);
+            }
+        }
+        return Array.from(uniqueMap.entries()).map(([phone, name]) => ({
+            phone,
+            name,
+        }));
     }
     /**
      * Close a session (graceful shutdown, keeps auth state)
