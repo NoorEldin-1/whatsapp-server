@@ -23,6 +23,7 @@ import makeWASocket, {
   BaileysEventMap,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
+import * as fs from "fs";
 import QRCode from "qrcode";
 import path from "path";
 import fs from "fs";
@@ -825,6 +826,133 @@ export class BaileysSessionManager extends EventEmitter {
       );
     } catch (err) {
       this.logger.error(err, `Error forcing chat fetch for ${sessionId}:`);
+    }
+  }
+
+  /**
+   * Get all groups the user is participating in
+   */
+  async getGroups(
+    sessionId: string,
+  ): Promise<
+    Array<{ id: string; subject: string; participantsCount: number }>
+  > {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status !== "CONNECTED" || !session.socket) {
+      throw new Error("Session is not connected");
+    }
+
+    try {
+      this.logger.info(`Fetching groups for session ${sessionId}...`);
+      const groups = await session.socket.groupFetchAllParticipating();
+      const result = [];
+
+      for (const [id, group] of Object.entries(groups)) {
+        result.push({
+          id,
+          subject: group.subject,
+          participantsCount: group.participants ? group.participants.length : 0,
+        });
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to fetch groups for ${sessionId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Extract contacts from specific groups
+   */
+  async extractGroupsContacts(
+    sessionId: string,
+    groupIds: string[],
+  ): Promise<Array<{ phone: string; name: string }>> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status !== "CONNECTED" || !session.socket) {
+      throw new Error("Session is not connected");
+    }
+
+    const result: Array<{ phone: string; name: string }> = [];
+    const myId = session.socket.user?.id?.split(":")[0]?.split("@")[0];
+
+    try {
+      this.logger.info(
+        `Extracting contacts from ${groupIds.length} groups for ${sessionId}...`,
+      );
+
+      for (const groupId of groupIds) {
+        try {
+          // Fetch complete metadata for each group to ensure participants array is populated
+          const metadata = await session.socket.groupMetadata(groupId);
+          const participants = metadata.participants || [];
+
+          fs.appendFileSync(
+            "group-debug.log",
+            `Group ${groupId} Metadata: ` +
+              JSON.stringify(metadata, null, 2) +
+              "\n",
+          );
+
+          for (const participant of participants) {
+            // Note: Baileys sometimes returns the phone number in `jid`, and an internal `@lid` in `id`.
+            const jid = participant.jid || participant.id;
+
+            // Only standard users
+            if (
+              !jid ||
+              !jid.includes("@s.whatsapp.net") ||
+              jid.includes("@g.us") ||
+              jid.includes("@newsletter") ||
+              jid.includes("@broadcast")
+            ) {
+              continue;
+            }
+
+            const phone = jid.split("@")[0];
+
+            // Validate phone number
+            if (!phone || !/^\d{10,20}$/.test(phone)) continue;
+
+            // Skip the bot's own number
+            if (myId && phone === myId) continue;
+
+            // Try to resolve name from session chats cache
+            let name = session.chats.get(jid) || phone;
+
+            result.push({ phone, name });
+          }
+        } catch (error) {
+          this.logger.error(
+            `Failed to fetch metadata for group ${groupId}:`,
+            error,
+          );
+        }
+      }
+
+      // Deduplicate by phone
+      const uniqueMap = new Map<string, string>();
+      for (const item of result) {
+        const existingName = uniqueMap.get(item.phone);
+        if (
+          !existingName ||
+          (existingName === item.phone && item.name !== item.phone)
+        ) {
+          uniqueMap.set(item.phone, item.name);
+        }
+      }
+
+      return Array.from(uniqueMap.entries()).map(([phone, name]) => ({
+        phone,
+        name,
+      }));
+    } catch (error) {
+      this.logger.error(
+        `Failed to extract groups contacts for ${sessionId}:`,
+        error,
+      );
+      throw error;
     }
   }
 

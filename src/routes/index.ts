@@ -609,6 +609,77 @@ router.get(
 );
 
 // ============================================================================
+// GROUPS ROUTES
+// ============================================================================
+
+/**
+ * Get all groups
+ * GET /api/:session/groups
+ */
+router.get(
+  "/api/:session/groups",
+  extractSession,
+  verifyToken,
+  async (req: Request, res: Response) => {
+    const session = (req as any).sessionName;
+    try {
+      const groups = await sessionManager.getGroups(session);
+      res.json({
+        status: "success",
+        response: groups,
+      });
+    } catch (error: any) {
+      console.error(`[Groups] Get error:`, error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to get groups",
+        error: String(error),
+      });
+    }
+  },
+);
+
+/**
+ * Extract contacts from groups
+ * POST /api/:session/groups/extract
+ */
+router.post(
+  "/api/:session/groups/extract",
+  extractSession,
+  verifyToken,
+  async (req: Request, res: Response) => {
+    const session = (req as any).sessionName;
+    const { groupIds } = req.body;
+
+    if (!groupIds || !Array.isArray(groupIds)) {
+      res.status(400).json({
+        status: "error",
+        message: "groupIds array is required",
+      });
+      return;
+    }
+
+    try {
+      const contacts = await sessionManager.extractGroupsContacts(
+        session,
+        groupIds,
+      );
+      res.json({
+        status: "success",
+        response: contacts,
+      });
+    } catch (error: any) {
+      console.error(`[Groups] Extract error:`, error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to extract groups contacts",
+        error: String(error),
+      });
+    }
+  },
+);
+
+// ============================================================================
 // MESSAGE ROUTES
 // ============================================================================
 
