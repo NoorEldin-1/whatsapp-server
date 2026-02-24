@@ -1218,6 +1218,44 @@ export class BaileysSessionManager extends EventEmitter {
   }
 
   /**
+   * Send a video with caption
+   */
+  async sendVideo(
+    sessionId: string,
+    phone: string,
+    videoBuffer: Buffer,
+    caption: string,
+    mimeType: string = "video/mp4",
+    typingTime: number = 0,
+  ): Promise<any> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.socket) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    if (session.status !== "CONNECTED") {
+      throw new Error(
+        `Session ${sessionId} not connected (status: ${session.status})`,
+      );
+    }
+
+    const jid = this.formatJid(phone);
+    this.logger.info(`Sending video to ${jid} via session ${sessionId}`);
+
+    this.touchSession(sessionId);
+
+    if (typingTime > 0) {
+      await this.simulateTyping(session.socket, jid, typingTime);
+    }
+
+    const result = await session.socket.sendMessage(jid, {
+      video: videoBuffer,
+      caption: caption,
+      mimetype: mimeType,
+    });
+    return result;
+  }
+
+  /**
    * Simulate typing presence before sending a message.
    * Shows "typing..." indicator on the recipient's screen.
    */

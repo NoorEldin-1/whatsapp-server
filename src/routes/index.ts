@@ -907,6 +907,86 @@ router.post(
   },
 );
 
+/**
+ * Send video with caption
+ * POST /api/:session/send-video
+ */
+router.post(
+  "/api/:session/send-video",
+  extractSession,
+  verifyToken,
+  async (req: Request, res: Response) => {
+    const session = (req as any).sessionName;
+    const { phone, base64, filename, caption, message, typingTime } = req.body;
+
+    if (!phone || !base64) {
+      res.status(400).json({
+        status: "Error",
+        message: "Phone and base64 video are required",
+      });
+      return;
+    }
+
+    try {
+      // Extract base64 data
+      let base64Data = base64;
+      let mimeType = "video/mp4";
+
+      const dataUrlMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
+      if (dataUrlMatch) {
+        mimeType = dataUrlMatch[1];
+        base64Data = dataUrlMatch[2];
+      }
+
+      const videoBuffer = Buffer.from(base64Data, "base64");
+      const finalCaption = caption || message || "";
+
+      // Handle single or array of phones
+      const phones = Array.isArray(phone) ? phone : [phone];
+      const results: any[] = [];
+      const typing = typeof typingTime === "number" ? typingTime : 0;
+
+      for (const p of phones) {
+        const result = await sessionManager.sendVideo(
+          session,
+          p,
+          videoBuffer,
+          finalCaption,
+          mimeType,
+          typing,
+        );
+        results.push(result);
+      }
+
+      res.status(201).json({
+        status: "success",
+        response: results,
+        mapper: "return",
+      });
+    } catch (error: any) {
+      console.error(`[Video] Send error:`, error);
+
+      if (
+        error.message?.includes("not connected") ||
+        error.message?.includes("not found")
+      ) {
+        res.status(404).json({
+          status: "Error",
+          message: "Session disconnected",
+          error: error.message,
+        });
+        return;
+      }
+
+      res.status(500).json({
+        status: "Error",
+        message: "Failed to send video",
+        error: error.message || String(error),
+      });
+    }
+  },
+);
+
 // ============================================================================
 // ADMIN ROUTES
 // ============================================================================
