@@ -10,9 +10,10 @@
  * - Credential persistence
  */
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast, proto, Browsers, } from "@whiskeysockets/baileys";
+import { injectZeroWidthChars } from "../utils/spintax.js";
+import * as fs from "fs";
 import QRCode from "qrcode";
 import path from "path";
-import fs from "fs";
 import pino from "pino";
 import { EventEmitter } from "events";
 export class BaileysSessionManager extends EventEmitter {
@@ -190,9 +191,9 @@ export class BaileysSessionManager extends EventEmitter {
                 printQRInTerminal: false,
                 logger: this.logger.child({ session: sessionId }),
                 browser: Browsers.ubuntu("Chrome"),
-                generateHighQualityLinkPreview: true,
-                syncFullHistory: true,
-                markOnlineOnConnect: true,
+                generateHighQualityLinkPreview: false,
+                syncFullHistory: true, // MUST remain true to populate `contacts.upsert` and allow fetching chats
+                markOnlineOnConnect: false,
                 getMessage: async (key) => {
                     // Required for resending messages and poll vote decryption
                     return proto.Message.fromObject({});
@@ -425,9 +426,29 @@ export class BaileysSessionManager extends EventEmitter {
                     !contact.id.includes("@g.us") &&
                     !contact.id.includes("@newsletter") &&
                     contact.id.includes("@s.whatsapp.net")) {
-                    // Only update if we have a real name, don't overwrite with just the number
-                    if (contact.name || contact.notify) {
-                        session.chats.set(contact.id, contact.name || contact.notify || contact.id.split("@")[0]);
+                    // Prefer real name, but always store the contact (fallback to phone number)
+                    const cleanPhone = contact.id.split("@")[0].split(":")[0];
+                    const displayName = contact.name || contact.notify || cleanPhone;
+                    // Only overwrite if we have a better name than what's cached
+                    const existing = session.chats.get(contact.id);
+                    if (!existing || contact.name || contact.notify) {
+                        session.chats.set(contact.id, displayName);
+                    }
+                }
+            }
+        });
+        socket.ev.on("contacts.update", (updates) => {
+            for (const update of updates) {
+                if (update.id &&
+                    !isJidBroadcast(update.id) &&
+                    !update.id.includes("@g.us") &&
+                    !update.id.includes("@newsletter") &&
+                    update.id.includes("@s.whatsapp.net")) {
+                    const cleanPhone = update.id.split("@")[0].split(":")[0];
+                    const displayName = update.name || update.notify || cleanPhone;
+                    const existing = session.chats.get(update.id);
+                    if (!existing || update.name || update.notify) {
+                        session.chats.set(update.id, displayName);
                     }
                 }
             }
@@ -448,8 +469,11 @@ export class BaileysSessionManager extends EventEmitter {
                     !contact.id.includes("@g.us") &&
                     !contact.id.includes("@newsletter") &&
                     contact.id.includes("@s.whatsapp.net")) {
-                    if (contact.name || contact.notify) {
-                        session.chats.set(contact.id, contact.name || contact.notify || contact.id.split("@")[0]);
+                    const cleanPhone = contact.id.split("@")[0].split(":")[0];
+                    const displayName = contact.name || contact.notify || cleanPhone;
+                    const existing = session.chats.get(contact.id);
+                    if (!existing || contact.name || contact.notify) {
+                        session.chats.set(contact.id, displayName);
                     }
                 }
             }
@@ -539,7 +563,8 @@ export class BaileysSessionManager extends EventEmitter {
                 !jid.includes("@newsletter") &&
                 !jid.includes("@broadcast") &&
                 jid.includes("@s.whatsapp.net")) {
-                const phone = jid.split("@")[0];
+                // Strip device suffix (e.g. "1234567890:12" -> "1234567890")
+                const phone = jid.split("@")[0].split(":")[0];
                 // Ensure the phone is strictly numeric and has a reasonable length (10-20 digits)
                 if (phone && /^\d{10,20}$/.test(phone)) {
                     result.push({ phone, name });
@@ -560,6 +585,126 @@ export class BaileysSessionManager extends EventEmitter {
             phone,
             name,
         }));
+    }
+    /**
+     * Forcibly fetch recent chats and contacts
+     * Used when syncFullHistory is disabled but the UI still requires a populated list.
+     */
+    async forceFetchChats(sessionId) {
+        const session = this.sessions.get(sessionId);
+        if (!session || session.status !== "CONNECTED" || !session.socket) {
+            return;
+        }
+        try {
+            this.logger.info(`Forcing fetch of recent chats for session ${sessionId}...`);
+            // Request active presence to wake up connection
+            await session.socket.sendPresenceUpdate("available");
+            // Attempt to query the server for groups and broadcast lists to trigger a sync
+            // Wait for a few seconds to allow incoming messages to populate `session.chats`
+            await session.socket.authState.keys.get("app-state-sync-version", [
+                "regular_high",
+                "regular_low",
+                "regular",
+            ]);
+            // Let it settle
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            this.logger.info(`Force fetch completed for ${sessionId}. Cached chats: ${session.chats.size}`);
+        }
+        catch (err) {
+            this.logger.error(err, `Error forcing chat fetch for ${sessionId}:`);
+        }
+    }
+    /**
+     * Get all groups the user is participating in
+     */
+    async getGroups(sessionId) {
+        const session = this.sessions.get(sessionId);
+        if (!session || session.status !== "CONNECTED" || !session.socket) {
+            throw new Error("Session is not connected");
+        }
+        try {
+            this.logger.info(`Fetching groups for session ${sessionId}...`);
+            const groups = await session.socket.groupFetchAllParticipating();
+            const result = [];
+            for (const [id, group] of Object.entries(groups)) {
+                result.push({
+                    id,
+                    subject: group.subject,
+                    participantsCount: group.participants ? group.participants.length : 0,
+                });
+            }
+            return result;
+        }
+        catch (error) {
+            this.logger.error(error, `Failed to fetch groups for ${sessionId}:`);
+            throw error;
+        }
+    }
+    /**
+     * Extract contacts from specific groups
+     */
+    async extractGroupsContacts(sessionId, groupIds) {
+        const session = this.sessions.get(sessionId);
+        if (!session || session.status !== "CONNECTED" || !session.socket) {
+            throw new Error("Session is not connected");
+        }
+        const result = [];
+        const myId = session.socket.user?.id?.split(":")[0]?.split("@")[0];
+        try {
+            this.logger.info(`Extracting contacts from ${groupIds.length} groups for ${sessionId}...`);
+            for (const groupId of groupIds) {
+                try {
+                    // Fetch complete metadata for each group to ensure participants array is populated
+                    const metadata = await session.socket.groupMetadata(groupId);
+                    const participants = metadata.participants || [];
+                    fs.appendFileSync("group-debug.log", `Group ${groupId} Metadata: ` +
+                        JSON.stringify(metadata, null, 2) +
+                        "\n");
+                    for (const participant of participants) {
+                        // Note: Baileys sometimes returns the phone number in `jid`, and an internal `@lid` in `id`.
+                        const jid = participant.jid || participant.id;
+                        // Only standard users
+                        if (!jid ||
+                            !jid.includes("@s.whatsapp.net") ||
+                            jid.includes("@g.us") ||
+                            jid.includes("@newsletter") ||
+                            jid.includes("@broadcast")) {
+                            continue;
+                        }
+                        const phone = jid.split("@")[0];
+                        // Validate phone number
+                        if (!phone || !/^\d{10,20}$/.test(phone))
+                            continue;
+                        // Skip the bot's own number
+                        if (myId && phone === myId)
+                            continue;
+                        // Try to resolve name from session chats cache
+                        let name = session.chats.get(jid) || phone;
+                        result.push({ phone, name });
+                    }
+                }
+                catch (error) {
+                    this.logger.error(error, `Failed to fetch metadata for group ${groupId}:`);
+                }
+            }
+            // Deduplicate by phone
+            const uniqueMap = new Map();
+            for (const item of result) {
+                const existingName = uniqueMap.get(item.phone);
+                if (!existingName ||
+                    (existingName === item.phone && item.name !== item.phone)) {
+                    uniqueMap.set(item.phone, item.name);
+                }
+            }
+            return Array.from(uniqueMap.entries()).map(([phone, name]) => ({
+                phone,
+                name,
+            }));
+        }
+        catch (error) {
+            this.logger.error(error, `Failed to extract groups contacts for ${sessionId}:`);
+            throw error;
+        }
     }
     /**
      * Close a session (graceful shutdown, keeps auth state)
@@ -695,7 +840,11 @@ export class BaileysSessionManager extends EventEmitter {
             await this.simulateTyping(session.socket, jid, typingTime);
         }
         // Send message
-        const result = await session.socket.sendMessage(jid, { text: message });
+        // Anti-ban: inject invisible zero-width chars to make each message unique
+        const uniqueMessage = injectZeroWidthChars(message);
+        const result = await session.socket.sendMessage(jid, {
+            text: uniqueMessage,
+        });
         return result;
     }
     /**
@@ -719,9 +868,11 @@ export class BaileysSessionManager extends EventEmitter {
             await this.simulateTyping(session.socket, jid, typingTime);
         }
         // Send image
+        // Anti-ban: inject invisible zero-width chars into caption
+        const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
         const result = await session.socket.sendMessage(jid, {
             image: imageBuffer,
-            caption: caption,
+            caption: uniqueCaption,
             mimetype: mimeType,
         });
         return result;
@@ -740,11 +891,39 @@ export class BaileysSessionManager extends EventEmitter {
         const jid = this.formatJid(phone);
         this.logger.info(`Sending file to ${jid} via session ${sessionId}`);
         this.touchSession(sessionId);
+        // Anti-ban: inject invisible zero-width chars into caption
+        const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
         const result = await session.socket.sendMessage(jid, {
             document: fileBuffer,
             mimetype: mimeType,
             fileName: filename,
-            caption: caption,
+            caption: uniqueCaption,
+        });
+        return result;
+    }
+    /**
+     * Send a video with caption
+     */
+    async sendVideo(sessionId, phone, videoBuffer, caption, mimeType = "video/mp4", typingTime = 0) {
+        const session = this.sessions.get(sessionId);
+        if (!session?.socket) {
+            throw new Error(`Session ${sessionId} not found`);
+        }
+        if (session.status !== "CONNECTED") {
+            throw new Error(`Session ${sessionId} not connected (status: ${session.status})`);
+        }
+        const jid = this.formatJid(phone);
+        this.logger.info(`Sending video to ${jid} via session ${sessionId}`);
+        this.touchSession(sessionId);
+        if (typingTime > 0) {
+            await this.simulateTyping(session.socket, jid, typingTime);
+        }
+        // Anti-ban: inject invisible zero-width chars into caption
+        const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
+        const result = await session.socket.sendMessage(jid, {
+            video: videoBuffer,
+            caption: uniqueCaption,
+            mimetype: mimeType,
         });
         return result;
     }

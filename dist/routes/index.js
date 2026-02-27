@@ -439,7 +439,7 @@ router.post("/api/:session/logout-session", extractSession, verifyToken, async (
  * Get active chats
  * GET /api/:session/chats
  */
-router.get("/api/:session/chats", extractSession, verifyToken, (req, res) => {
+router.get("/api/:session/chats", extractSession, verifyToken, async (req, res) => {
     const session = req.sessionName;
     try {
         const sessionInfo = sessionManager.getSession(session);
@@ -450,7 +450,18 @@ router.get("/api/:session/chats", extractSession, verifyToken, (req, res) => {
             });
             return;
         }
-        const chats = sessionManager.getChats(session);
+        let chats = sessionManager.getChats(session);
+        // If chats are empty, attempt to force an active sync using app-state
+        if (chats.length === 0 && sessionInfo.socket) {
+            try {
+                console.log(`[Chats] Forcing chat fetch for empty session ${session}`);
+                await sessionManager.forceFetchChats(session);
+                chats = sessionManager.getChats(session);
+            }
+            catch (e) {
+                console.log(`[Chats] Failed to force fetch: `, e);
+            }
+        }
         res.json({
             status: "success",
             response: chats,
@@ -461,6 +472,61 @@ router.get("/api/:session/chats", extractSession, verifyToken, (req, res) => {
         res.status(500).json({
             status: "error",
             message: "Failed to get chats",
+            error: String(error),
+        });
+    }
+});
+// ============================================================================
+// GROUPS ROUTES
+// ============================================================================
+/**
+ * Get all groups
+ * GET /api/:session/groups
+ */
+router.get("/api/:session/groups", extractSession, verifyToken, async (req, res) => {
+    const session = req.sessionName;
+    try {
+        const groups = await sessionManager.getGroups(session);
+        res.json({
+            status: "success",
+            response: groups,
+        });
+    }
+    catch (error) {
+        console.error(`[Groups] Get error:`, error);
+        res.status(500).json({
+            status: "error",
+            message: "Failed to get groups",
+            error: String(error),
+        });
+    }
+});
+/**
+ * Extract contacts from groups
+ * POST /api/:session/groups/extract
+ */
+router.post("/api/:session/groups/extract", extractSession, verifyToken, async (req, res) => {
+    const session = req.sessionName;
+    const { groupIds } = req.body;
+    if (!groupIds || !Array.isArray(groupIds)) {
+        res.status(400).json({
+            status: "error",
+            message: "groupIds array is required",
+        });
+        return;
+    }
+    try {
+        const contacts = await sessionManager.extractGroupsContacts(session, groupIds);
+        res.json({
+            status: "success",
+            response: contacts,
+        });
+    }
+    catch (error) {
+        console.error(`[Groups] Extract error:`, error);
+        res.status(500).json({
+            status: "error",
+            message: "Failed to extract groups contacts",
             error: String(error),
         });
     }
@@ -624,6 +690,63 @@ router.post("/api/:session/send-file", extractSession, verifyToken, async (req, 
         res.status(500).json({
             status: "Error",
             message: "Failed to send file",
+            error: error.message || String(error),
+        });
+    }
+});
+/**
+ * Send video with caption
+ * POST /api/:session/send-video
+ */
+router.post("/api/:session/send-video", extractSession, verifyToken, async (req, res) => {
+    const session = req.sessionName;
+    const { phone, base64, filename, caption, message, typingTime } = req.body;
+    if (!phone || !base64) {
+        res.status(400).json({
+            status: "Error",
+            message: "Phone and base64 video are required",
+        });
+        return;
+    }
+    try {
+        // Extract base64 data
+        let base64Data = base64;
+        let mimeType = "video/mp4";
+        const dataUrlMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
+        if (dataUrlMatch) {
+            mimeType = dataUrlMatch[1];
+            base64Data = dataUrlMatch[2];
+        }
+        const videoBuffer = Buffer.from(base64Data, "base64");
+        const finalCaption = caption || message || "";
+        // Handle single or array of phones
+        const phones = Array.isArray(phone) ? phone : [phone];
+        const results = [];
+        const typing = typeof typingTime === "number" ? typingTime : 0;
+        for (const p of phones) {
+            const result = await sessionManager.sendVideo(session, p, videoBuffer, finalCaption, mimeType, typing);
+            results.push(result);
+        }
+        res.status(201).json({
+            status: "success",
+            response: results,
+            mapper: "return",
+        });
+    }
+    catch (error) {
+        console.error(`[Video] Send error:`, error);
+        if (error.message?.includes("not connected") ||
+            error.message?.includes("not found")) {
+            res.status(404).json({
+                status: "Error",
+                message: "Session disconnected",
+                error: error.message,
+            });
+            return;
+        }
+        res.status(500).json({
+            status: "Error",
+            message: "Failed to send video",
             error: error.message || String(error),
         });
     }

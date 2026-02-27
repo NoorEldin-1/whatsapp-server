@@ -109,6 +109,26 @@ export declare class BaileysSessionManager extends EventEmitter {
         name: string;
     }>;
     /**
+     * Forcibly fetch recent chats and contacts
+     * Used when syncFullHistory is disabled but the UI still requires a populated list.
+     */
+    forceFetchChats(sessionId: string): Promise<void>;
+    /**
+     * Get all groups the user is participating in
+     */
+    getGroups(sessionId: string): Promise<Array<{
+        id: string;
+        subject: string;
+        participantsCount: number;
+    }>>;
+    /**
+     * Extract contacts from specific groups
+     */
+    extractGroupsContacts(sessionId: string, groupIds: string[]): Promise<Array<{
+        phone: string;
+        name: string;
+    }>>;
+    /**
      * Close a session (graceful shutdown, keeps auth state)
      */
     closeSession(sessionId: string): Promise<boolean>;
@@ -136,6 +156,10 @@ export declare class BaileysSessionManager extends EventEmitter {
      * Send a file/document
      */
     sendFile(sessionId: string, phone: string, fileBuffer: Buffer, filename: string, caption: string, mimeType: string): Promise<any>;
+    /**
+     * Send a video with caption
+     */
+    sendVideo(sessionId: string, phone: string, videoBuffer: Buffer, caption: string, mimeType?: string, typingTime?: number): Promise<any>;
     /**
      * Simulate typing presence before sending a message.
      * Shows "typing..." indicator on the recipient's screen.

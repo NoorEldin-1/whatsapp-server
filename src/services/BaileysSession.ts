@@ -23,10 +23,10 @@ import makeWASocket, {
   BaileysEventMap,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
+import { injectZeroWidthChars } from "../utils/spintax.js";
 import * as fs from "fs";
 import QRCode from "qrcode";
 import path from "path";
-import fs from "fs";
 import pino, { Logger } from "pino";
 import { EventEmitter } from "events";
 
@@ -592,12 +592,13 @@ export class BaileysSessionManager extends EventEmitter {
           !contact.id.includes("@newsletter") &&
           contact.id.includes("@s.whatsapp.net")
         ) {
-          // Only update if we have a real name, don't overwrite with just the number
-          if (contact.name || contact.notify) {
-            session.chats.set(
-              contact.id,
-              contact.name || contact.notify || contact.id.split("@")[0],
-            );
+          // Prefer real name, but always store the contact (fallback to phone number)
+          const cleanPhone = contact.id.split("@")[0].split(":")[0];
+          const displayName = contact.name || contact.notify || cleanPhone;
+          // Only overwrite if we have a better name than what's cached
+          const existing = session.chats.get(contact.id);
+          if (!existing || contact.name || contact.notify) {
+            session.chats.set(contact.id, displayName);
           }
         }
       }
@@ -612,12 +613,11 @@ export class BaileysSessionManager extends EventEmitter {
           !update.id.includes("@newsletter") &&
           update.id.includes("@s.whatsapp.net")
         ) {
-          // Only update if we have a real name
-          if (update.name || update.notify) {
-            session.chats.set(
-              update.id,
-              update.name || update.notify || update.id.split("@")[0],
-            );
+          const cleanPhone = update.id.split("@")[0].split(":")[0];
+          const displayName = update.name || update.notify || cleanPhone;
+          const existing = session.chats.get(update.id);
+          if (!existing || update.name || update.notify) {
+            session.chats.set(update.id, displayName);
           }
         }
       }
@@ -643,11 +643,11 @@ export class BaileysSessionManager extends EventEmitter {
           !contact.id.includes("@newsletter") &&
           contact.id.includes("@s.whatsapp.net")
         ) {
-          if (contact.name || contact.notify) {
-            session.chats.set(
-              contact.id,
-              contact.name || contact.notify || contact.id.split("@")[0],
-            );
+          const cleanPhone = contact.id.split("@")[0].split(":")[0];
+          const displayName = contact.name || contact.notify || cleanPhone;
+          const existing = session.chats.get(contact.id);
+          if (!existing || contact.name || contact.notify) {
+            session.chats.set(contact.id, displayName);
           }
         }
       }
@@ -765,7 +765,8 @@ export class BaileysSessionManager extends EventEmitter {
         !jid.includes("@broadcast") &&
         jid.includes("@s.whatsapp.net")
       ) {
-        const phone = jid.split("@")[0];
+        // Strip device suffix (e.g. "1234567890:12" -> "1234567890")
+        const phone = jid.split("@")[0].split(":")[0];
         // Ensure the phone is strictly numeric and has a reasonable length (10-20 digits)
         if (phone && /^\d{10,20}$/.test(phone)) {
           result.push({ phone, name });
@@ -856,8 +857,11 @@ export class BaileysSessionManager extends EventEmitter {
       }
 
       return result;
-    } catch (error) {
-      this.logger.error(`Failed to fetch groups for ${sessionId}:`, error);
+    } catch (error: unknown) {
+      this.logger.error(
+        error as Error,
+        `Failed to fetch groups for ${sessionId}:`,
+      );
       throw error;
     }
   }
@@ -923,10 +927,10 @@ export class BaileysSessionManager extends EventEmitter {
 
             result.push({ phone, name });
           }
-        } catch (error) {
+        } catch (error: unknown) {
           this.logger.error(
+            error as Error,
             `Failed to fetch metadata for group ${groupId}:`,
-            error,
           );
         }
       }
@@ -947,10 +951,10 @@ export class BaileysSessionManager extends EventEmitter {
         phone,
         name,
       }));
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
+        error as Error,
         `Failed to extract groups contacts for ${sessionId}:`,
-        error,
       );
       throw error;
     }
@@ -1136,7 +1140,11 @@ export class BaileysSessionManager extends EventEmitter {
     }
 
     // Send message
-    const result = await session.socket.sendMessage(jid, { text: message });
+    // Anti-ban: inject invisible zero-width chars to make each message unique
+    const uniqueMessage = injectZeroWidthChars(message);
+    const result = await session.socket.sendMessage(jid, {
+      text: uniqueMessage,
+    });
     return result;
   }
 
@@ -1174,9 +1182,11 @@ export class BaileysSessionManager extends EventEmitter {
     }
 
     // Send image
+    // Anti-ban: inject invisible zero-width chars into caption
+    const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
     const result = await session.socket.sendMessage(jid, {
       image: imageBuffer,
-      caption: caption,
+      caption: uniqueCaption,
       mimetype: mimeType,
     });
     return result;
@@ -1208,11 +1218,13 @@ export class BaileysSessionManager extends EventEmitter {
 
     this.touchSession(sessionId);
 
+    // Anti-ban: inject invisible zero-width chars into caption
+    const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
     const result = await session.socket.sendMessage(jid, {
       document: fileBuffer,
       mimetype: mimeType,
       fileName: filename,
-      caption: caption,
+      caption: uniqueCaption,
     });
     return result;
   }
@@ -1247,9 +1259,11 @@ export class BaileysSessionManager extends EventEmitter {
       await this.simulateTyping(session.socket, jid, typingTime);
     }
 
+    // Anti-ban: inject invisible zero-width chars into caption
+    const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
     const result = await session.socket.sendMessage(jid, {
       video: videoBuffer,
-      caption: caption,
+      caption: uniqueCaption,
       mimetype: mimeType,
     });
     return result;
