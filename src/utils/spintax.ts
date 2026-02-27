@@ -67,8 +67,9 @@ function tokenContainsUrl(token: string): boolean {
  * The function:
  * 1. Splits text into tokens by whitespace (preserving whitespace structure).
  * 2. For each token, checks if it contains a URL — if so, skips it entirely.
- * 3. For non-URL tokens longer than 1 character, injects a random zero-width
- *    sequence at a random position inside the word with ~60% probability.
+ * 3. For non-URL tokens longer than 1 character, appends a random zero-width
+ *    sequence at the END of the word with ~60% probability. This preserves
+ *    cursive ligatures in Arabic/Persian/Urdu and avoids breaking any script.
  * 4. Prepends a unique zero-width "fingerprint" at the very start of the
  *    message (safe position — never adjacent to a trailing URL).
  *
@@ -99,10 +100,11 @@ export function injectZeroWidthChars(text: string): string {
       return token;
     }
 
-    // Inject with 60% probability at a random position within the word
+    // Append zero-width sequence at the END of the word with 60% probability.
+    // We never inject INSIDE the word because characters like U+200C break
+    // cursive ligatures in Arabic, Persian, Urdu, and similar scripts.
     if (Math.random() < 0.6) {
-      const pos = 1 + Math.floor(Math.random() * (token.length - 1));
-      return token.slice(0, pos) + buildZeroWidthSequence() + token.slice(pos);
+      return token + buildZeroWidthSequence();
     }
 
     return token;

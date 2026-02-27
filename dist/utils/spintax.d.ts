@@ -18,8 +18,9 @@
  * The function:
  * 1. Splits text into tokens by whitespace (preserving whitespace structure).
  * 2. For each token, checks if it contains a URL — if so, skips it entirely.
- * 3. For non-URL tokens longer than 1 character, injects a random zero-width
- *    sequence at a random position inside the word with ~60% probability.
+ * 3. For non-URL tokens longer than 1 character, appends a random zero-width
+ *    sequence at the END of the word with ~60% probability. This preserves
+ *    cursive ligatures in Arabic/Persian/Urdu and avoids breaking any script.
  * 4. Prepends a unique zero-width "fingerprint" at the very start of the
  *    message (safe position — never adjacent to a trailing URL).
  *
