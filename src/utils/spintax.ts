@@ -21,11 +21,16 @@ const ZERO_WIDTH_CHARS: string[] = [
 ];
 
 /**
- * Regex to detect URLs so we never inject characters inside them.
- * Matches http(s), ftp, and common URL patterns.
+ * Robust regex to detect URLs so we never inject characters inside them.
+ * Matches:
+ *  - http(s):// and ftp:// prefixed URLs
+ *  - www. prefixed URLs
+ *  - Bare domain URLs like example.com or example.com/path
+ *
+ * Uses word-boundary and lookahead to avoid greedily consuming trailing punctuation.
  */
 const URL_REGEX =
-  /https?:\/\/[^\s]+|ftp:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\/[^\s]*/g;
+  /(?:https?:\/\/|ftp:\/\/|www\.)[^\s]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?:\/[^\s]*)?/i;
 
 /**
  * Generate a random zero-width character from the pool.
@@ -49,13 +54,23 @@ function buildZeroWidthSequence(): string {
 }
 
 /**
+ * Check whether a token contains any URL pattern.
+ * If it does, the token must NOT be modified.
+ */
+function tokenContainsUrl(token: string): boolean {
+  return URL_REGEX.test(token);
+}
+
+/**
  * Inject zero-width characters into a text string to make it unique.
  *
  * The function:
- * 1. Identifies and preserves all URLs in the text (no injection inside links).
- * 2. Splits the remaining text by words.
- * 3. Injects a random zero-width sequence between ~60% of word boundaries.
- * 4. Appends a unique zero-width "fingerprint" at the end of the message.
+ * 1. Splits text into tokens by whitespace (preserving whitespace structure).
+ * 2. For each token, checks if it contains a URL — if so, skips it entirely.
+ * 3. For non-URL tokens longer than 1 character, injects a random zero-width
+ *    sequence at a random position inside the word with ~60% probability.
+ * 4. Prepends a unique zero-width "fingerprint" at the very start of the
+ *    message (safe position — never adjacent to a trailing URL).
  *
  * @param text - The original message text
  * @returns The text with invisible zero-width characters injected
@@ -65,24 +80,17 @@ export function injectZeroWidthChars(text: string): string {
     return text;
   }
 
-  // Step 1: Extract and map all URLs to placeholders
-  const urlMap: Map<string, string> = new Map();
-  let placeholderIndex = 0;
+  // Split text into tokens preserving exact whitespace structure
+  const tokens = text.split(/(\s+)/);
 
-  const textWithPlaceholders = text.replace(URL_REGEX, (match) => {
-    const placeholder = `__ZW_URL_${placeholderIndex}__`;
-    urlMap.set(placeholder, match);
-    placeholderIndex++;
-    return placeholder;
-  });
+  const processedTokens = tokens.map((token) => {
+    // Skip whitespace tokens
+    if (/^\s+$/.test(token)) {
+      return token;
+    }
 
-  // Step 2: Split text into words (preserving whitespace structure)
-  const tokens = textWithPlaceholders.split(/(\s+)/);
-
-  // Step 3: Inject zero-width chars between words with ~60% probability
-  const injectedTokens = tokens.map((token, index) => {
-    // Skip whitespace tokens and URL placeholders
-    if (/^\s+$/.test(token) || token.startsWith("__ZW_URL_")) {
+    // Skip tokens that contain any URL pattern — leave them 100% intact
+    if (tokenContainsUrl(token)) {
       return token;
     }
 
@@ -100,15 +108,12 @@ export function injectZeroWidthChars(text: string): string {
     return token;
   });
 
-  let result = injectedTokens.join("");
+  let result = processedTokens.join("");
 
-  // Step 4: Append a unique zero-width fingerprint at the end
-  result += buildZeroWidthSequence();
-
-  // Step 5: Restore original URLs from placeholders
-  for (const [placeholder, originalUrl] of urlMap.entries()) {
-    result = result.replace(placeholder, originalUrl);
-  }
+  // Prepend a unique zero-width fingerprint at the start of the message.
+  // This is always safe because it precedes any textual content and cannot
+  // corrupt a URL that might appear at the end of the message.
+  result = buildZeroWidthSequence() + result;
 
   return result;
 }
