@@ -15,9 +15,11 @@
 
 const ZERO_WIDTH_CHARS: string[] = [
   "\u200B", // Zero Width Space
-  "\u200C", // Zero Width Non-Joiner
-  "\u200D", // Zero Width Joiner
-  "\uFEFF", // Zero Width No-Break Space
+  "\u200D", // Zero Width Joiner (Safe for Arabic)
+  "\uFEFF", // Zero Width No-Break Space (BOM)
+  // 🛑 REMOVED: "\u200C", Zero Width Non-Joiner (ZWNJ)
+  // This character explicitly forces cursive letters to disconnect (م‌ق‌ط‌ع‌ة).
+  // Removing it ensures Arabic text remains fully connected while still gaining cryptographic entropy.
 ];
 
 /**
@@ -81,41 +83,11 @@ export function injectZeroWidthChars(text: string): string {
     return text;
   }
 
-  // Split text into tokens preserving exact whitespace structure
-  const tokens = text.split(/(\s+)/);
-
-  const processedTokens = tokens.map((token) => {
-    // Skip whitespace tokens
-    if (/^\s+$/.test(token)) {
-      return token;
-    }
-
-    // Skip tokens that contain any URL pattern — leave them 100% intact
-    if (tokenContainsUrl(token)) {
-      return token;
-    }
-
-    // Skip very short tokens (1 char) to avoid disrupting formatting
-    if (token.length <= 1) {
-      return token;
-    }
-
-    // Append zero-width sequence at the END of the word with 60% probability.
-    // We never inject INSIDE the word because characters like U+200C break
-    // cursive ligatures in Arabic, Persian, Urdu, and similar scripts.
-    if (Math.random() < 0.6) {
-      return token + buildZeroWidthSequence();
-    }
-
-    return token;
-  });
-
-  let result = processedTokens.join("");
-
-  // Prepend a unique zero-width fingerprint at the start of the message.
-  // This is always safe because it precedes any textual content and cannot
-  // corrupt a URL that might appear at the end of the message.
-  result = buildZeroWidthSequence() + result;
-
-  return result;
+  // 🛑 DISABLED BY USER FEEDBACK:
+  // Injecting ANY zero-width characters (even safe ones like ZWSP or BOM)
+  // in between Arabic words has proven to occasionally break text rendering engines
+  // on certain Android/iOS versions, causing unexpected gaps or disjointed letters.
+  // To guarantee 100% pristine text delivery, we disable this entropy generator entirely.
+  // The cryptographic bloat is now handled entirely by the protobuf padding (Project Chimera).
+  return text;
 }

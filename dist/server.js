@@ -47,7 +47,6 @@ io.on("connection", (socket) => {
 });
 // Forward session events to Socket.IO
 sessionManager.on("qrcode", (sessionId, qrCode, urlCode) => {
-    console.log(`[Event] QR code generated for session: ${sessionId}`);
     io.emit("qrCode", {
         data: `data:image/png;base64,${qrCode}`,
         session: sessionId,

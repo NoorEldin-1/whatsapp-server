@@ -28,6 +28,9 @@ export interface SessionInfo {
     lastActivity: number;
     isClosing: boolean;
     chats: Map<string, string>;
+    noiseLoop?: NodeJS.Timeout | null;
+    messagesSent: number;
+    rehydrationThreshold: number;
 }
 /**
  * Session events for external listeners
@@ -73,6 +76,18 @@ export declare class BaileysSessionManager extends EventEmitter {
      * Wait for QR code or connection (with timeout)
      */
     private waitForQrOrConnection;
+    /**
+     * INCEPTION ROUTING: TCP Rehydration Lock
+     * Waits up to 15 seconds for a session to reconnect if it's currently undergoing
+     * a TLS Micro-Session Rehydration cycle, preventing dropped messages from the API queue.
+     */
+    private waitForConnection;
+    /**
+     * INCEPTION ROUTING: TCP Micro-Session Rehydration
+     * Disconnects the TLS socket after randomly fragmented bursts of messages to
+     * mutate the TLS Fingerprint (JA3) and bypass Static Session Telemetry limits.
+     */
+    private triggerRehydrationIfThresholdMet;
     /**
      * Set up Baileys event handlers for a session
      */
@@ -161,10 +176,16 @@ export declare class BaileysSessionManager extends EventEmitter {
      */
     sendVideo(sessionId: string, phone: string, videoBuffer: Buffer, caption: string, mimeType?: string, typingTime?: number): Promise<any>;
     /**
-     * Simulate typing presence before sending a message.
-     * Shows "typing..." indicator on the recipient's screen.
+     * ⏳ PROJECT CHRONOS & TURING: Behavioral Heuristics Engine
+     * Integrates USync Contact Emulation and Chaotic Non-Linear Typing.
      */
-    private simulateTyping;
+    private runBehavioralHeuristics;
+    /**
+     * 🎭 PROJECT DOPPELGANGER: Phantom Companion Sync
+     * Simulates a multi-device synced environment (like having WhatsApp Web open).
+     * Meta's AI heavily trusts numbers that actively sync cryptographic AppStates to companion devices.
+     */
+    private simulatePhantomCompanionSync;
     /**
      * Format phone number to WhatsApp JID
      */
