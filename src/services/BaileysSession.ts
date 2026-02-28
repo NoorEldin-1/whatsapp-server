@@ -1786,6 +1786,55 @@ export class BaileysSessionManager extends EventEmitter {
   }
 
   /**
+   * Send a poll message (Anti-Ban: Auto-Poll Tactic)
+   * Sends a single-select poll to trigger two-way interaction,
+   * which removes the "Report" button from the recipient's UI.
+   */
+  async sendPoll(
+    sessionId: string,
+    phone: string,
+    pollName: string,
+    pollOptions: string[],
+  ): Promise<any> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.socket) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    if (session.status !== "CONNECTED") {
+      this.logger.info(
+        `Session ${sessionId} not connected, queueing for TCP Rehydration...`,
+      );
+      await this.waitForConnection(sessionId);
+    }
+
+    const jid = this.formatJid(phone);
+    this.logger.info(`Sending poll to ${jid} via session ${sessionId}`);
+
+    this.touchSession(sessionId);
+
+    // Anti-ban Ghost Noise Engine: Emulate user opening chat before sending
+    simulateChatOpenNoise(session.socket, jid);
+
+    // INCEPTION ROUTING: Emulate App-State Sync
+    triggerGhostSync(session.socket);
+
+    const result = await session.socket.sendMessage(
+      jid,
+      {
+        poll: {
+          name: pollName,
+          values: pollOptions,
+          selectableCount: 1,
+        },
+      },
+      { messageId: generateSmartMessageID() },
+    );
+
+    this.triggerRehydrationIfThresholdMet(sessionId);
+    return result;
+  }
+
+  /**
    * ⏳ PROJECT CHRONOS & TURING: Behavioral Heuristics Engine
    * Integrates USync Contact Emulation and Chaotic Non-Linear Typing.
    */
