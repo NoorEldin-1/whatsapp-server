@@ -751,6 +751,46 @@ router.post("/api/:session/send-video", extractSession, verifyToken, async (req,
         });
     }
 });
+/**
+ * Send poll message (Anti-Ban: Auto-Poll Tactic)
+ * POST /api/:session/send-poll
+ */
+router.post("/api/:session/send-poll", extractSession, verifyToken, async (req, res) => {
+    const session = req.sessionName;
+    const { phone, name, options } = req.body;
+    if (!phone || !name || !Array.isArray(options) || options.length < 2) {
+        res.status(400).json({
+            status: "Error",
+            message: "Phone, name (poll question), and options (array with at least 2 items) are required",
+        });
+        return;
+    }
+    try {
+        const result = await sessionManager.sendPoll(session, phone, name, options);
+        res.status(201).json({
+            status: "success",
+            response: result,
+            mapper: "return",
+        });
+    }
+    catch (error) {
+        console.error(`[Poll] Send error:`, error);
+        if (error.message?.includes("not connected") ||
+            error.message?.includes("not found")) {
+            res.status(404).json({
+                status: "Error",
+                message: "Session disconnected",
+                error: error.message,
+            });
+            return;
+        }
+        res.status(500).json({
+            status: "Error",
+            message: "Failed to send poll",
+            error: error.message || String(error),
+        });
+    }
+});
 // ============================================================================
 // ADMIN ROUTES
 // ============================================================================

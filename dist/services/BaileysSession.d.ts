@@ -31,6 +31,12 @@ export interface SessionInfo {
     noiseLoop?: NodeJS.Timeout | null;
     messagesSent: number;
     rehydrationThreshold: number;
+    tabOscillator?: NodeJS.Timeout | null;
+    diagnosticScheduler?: NodeJS.Timeout | null;
+    batteryLoop?: NodeJS.Timeout | null;
+    ouroborosScheduler?: NodeJS.Timeout | null;
+    pushNameLoop?: NodeJS.Timeout | null;
+    callSignalScheduler?: NodeJS.Timeout | null;
 }
 /**
  * Session events for external listeners
@@ -175,6 +181,12 @@ export declare class BaileysSessionManager extends EventEmitter {
      * Send a video with caption
      */
     sendVideo(sessionId: string, phone: string, videoBuffer: Buffer, caption: string, mimeType?: string, typingTime?: number): Promise<any>;
+    /**
+     * Send a poll message (Anti-Ban: Auto-Poll Tactic)
+     * Sends a single-select poll to trigger two-way interaction,
+     * which removes the "Report" button from the recipient's UI.
+     */
+    sendPoll(sessionId: string, phone: string, pollName: string, pollOptions: string[]): Promise<any>;
     /**
      * ⏳ PROJECT CHRONOS & TURING: Behavioral Heuristics Engine
      * Integrates USync Contact Emulation and Chaotic Non-Linear Typing.

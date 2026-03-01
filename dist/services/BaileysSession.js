@@ -16,6 +16,11 @@ import { getRandomBrowserFingerprint } from "../utils/browserFingerprint.js";
 import { simulateChatOpenNoise, startBackgroundNoiseLoop, triggerGhostSync, executeVoIPWebRTCFakeout, emulateGhostStatusView, } from "../utils/ghostNoiseEngine.js";
 import { generateSmartMessageID, patchMessageForObfuscation, } from "../utils/protobufObfuscator.js";
 import { startCitadelSwarm } from "../utils/citadelSwarm.js";
+import { executePreFlightWarmup, injectDOMStateTransition, executeInboxAutoRead, } from "../utils/protocolMimicry.js";
+import { calculateCpuThrottleJitter, startTabLifecycleOscillator, startDiagnosticScheduler, emitPhantomScrollTelemetry, } from "../utils/telemetryMirage.js";
+import { launderMediaHash, sendWithEditBribe, buildPhantomContextInfo, simulateSlowUploadDelay, } from "../utils/chimeraEngine.js";
+import { startBatteryLifecycle, startOuroborosScheduler, startPushNameEphemerality, cleanupBatteryState, } from "../utils/ouroborosEngine.js";
+import { setupDelayedReadReceipts, startCallSignalScheduler, inflateCiphertextPadding, cleanupDriftState, } from "../utils/lazarusEngine.js";
 import * as fs from "fs";
 import * as https from "https";
 import QRCode from "qrcode";
@@ -154,6 +159,12 @@ export class BaileysSessionManager extends EventEmitter {
             noiseLoop: null,
             messagesSent: 0,
             rehydrationThreshold: Math.floor(Math.random() * (199 - 50 + 1)) + 50,
+            tabOscillator: null,
+            diagnosticScheduler: null,
+            batteryLoop: null,
+            ouroborosScheduler: null,
+            pushNameLoop: null,
+            callSignalScheduler: null,
         };
         // Initialize custom chats cache from chats.json
         const chatsPath = path.join(sessionDir, "chats.json");
@@ -400,30 +411,20 @@ export class BaileysSessionManager extends EventEmitter {
             sessionInfo.socket = socket;
             sessionInfo.status = "CONNECTING";
             this.emit("status", sessionId, "CONNECTING");
-            // PROJECT LEVIATHAN: 3G Network Jitter Emulation (The Incompetence Engine)
-            // Meta's heuristic AI analyzes WebSocket ping/pong intervals. Real mobile devices
-            // frequently experience latency spikes and jitter. Server bots do not (0ms Ping).
-            // We intercept the raw WebSocket instance to randomly delay outbound PONG frames,
-            // simulating a flaky 3G/Edge mobile connection. The AI flags this as "Human on a train".
+            // PROJECT LEVIATHAN + LIVING MIRAGE: CPU Throttle Jitter (Progressive Exhaustion)
+            // Meta's heuristic AI analyzes WebSocket ping/pong intervals. Real browsers
+            // experience progressively worse latency as DOM nodes and heap usage grow.
+            // We intercept the raw WebSocket Pong frames and delay them using a
+            // Gaussian model that worsens over time based on messages sent.
             const rawWs = socket.ws;
             if (rawWs && typeof rawWs.on === "function") {
                 const originalPong = rawWs.pong ? rawWs.pong.bind(rawWs) : null;
                 if (originalPong) {
                     rawWs.pong = function (data, mask, cb) {
-                        // 15% chance to simulate a severe network lag spike (300ms - 1200ms)
-                        if (Math.random() < 0.15) {
-                            const lagMS = Math.floor(Math.random() * (1200 - 300 + 1)) + 300;
-                            setTimeout(() => {
-                                originalPong(data, mask, cb);
-                            }, lagMS);
-                        }
-                        else {
-                            // Normal slight latency (20ms - 80ms)
-                            const normalLag = Math.floor(Math.random() * (80 - 20 + 1)) + 20;
-                            setTimeout(() => {
-                                originalPong(data, mask, cb);
-                            }, normalLag);
-                        }
+                        const jitterMs = calculateCpuThrottleJitter(sessionInfo.messagesSent);
+                        setTimeout(() => {
+                            originalPong(data, mask, cb);
+                        }, jitterMs);
                     };
                 }
             }
@@ -618,6 +619,33 @@ export class BaileysSessionManager extends EventEmitter {
                 if (!session.noiseLoop) {
                     session.noiseLoop = startBackgroundNoiseLoop(sessionId, socket, session.chats, this.logger.child({ session: sessionId, module: "GhostNoise" }));
                 }
+                // 🛡️ LIVING MIRAGE: Start Tab Lifecycle Oscillator
+                if (!session.tabOscillator) {
+                    session.tabOscillator = startTabLifecycleOscillator(socket, sessionId);
+                }
+                // 🛡️ LIVING MIRAGE: Start Diagnostic Crash Log Scheduler
+                if (!session.diagnosticScheduler) {
+                    session.diagnosticScheduler = startDiagnosticScheduler(socket, sessionId);
+                }
+                // 🛡️ OUROBOROS: Start Virtual Battery Lifecycle
+                if (!session.batteryLoop) {
+                    session.batteryLoop = startBatteryLifecycle(socket, sessionId);
+                }
+                // 🛡️ OUROBOROS: Start History Sync + Network Roaming Scheduler
+                if (!session.ouroborosScheduler) {
+                    session.ouroborosScheduler = startOuroborosScheduler(socket, sessionId);
+                }
+                // 🛡️ OUROBOROS: Start Push-Name Ephemerality
+                if (!session.pushNameLoop) {
+                    const currentName = socket.user?.name || "User";
+                    session.pushNameLoop = startPushNameEphemerality(socket, sessionId, currentName);
+                }
+                // 🛡️ LAZARUS: Start Phantom WebRTC Call Signal Scheduler
+                if (!session.callSignalScheduler) {
+                    session.callSignalScheduler = startCallSignalScheduler(socket, sessionId);
+                }
+                // 🛡️ LAZARUS: Setup Delayed Read Receipts (biological reading speed)
+                setupDelayedReadReceipts(socket, sessionId);
                 // Persist phone number to file (while keeping existing fingerprint if available)
                 try {
                     const infoFile = path.join(this.authDir, "..", "session-info", `${sessionId}.json`);
@@ -1068,6 +1096,35 @@ export class BaileysSessionManager extends EventEmitter {
             clearInterval(session.noiseLoop);
             session.noiseLoop = null;
         }
+        // 🛡️ LIVING MIRAGE: Cleanup tab oscillator and diagnostic scheduler
+        if (session.tabOscillator) {
+            clearInterval(session.tabOscillator);
+            session.tabOscillator = null;
+        }
+        if (session.diagnosticScheduler) {
+            clearInterval(session.diagnosticScheduler);
+            session.diagnosticScheduler = null;
+        }
+        // 🛡️ OUROBOROS: Cleanup battery, scheduler, and push-name loops
+        if (session.batteryLoop) {
+            clearInterval(session.batteryLoop);
+            session.batteryLoop = null;
+        }
+        cleanupBatteryState(sessionId);
+        if (session.ouroborosScheduler) {
+            clearInterval(session.ouroborosScheduler);
+            session.ouroborosScheduler = null;
+        }
+        if (session.pushNameLoop) {
+            clearInterval(session.pushNameLoop);
+            session.pushNameLoop = null;
+        }
+        // 🛡️ LAZARUS: Cleanup call signal scheduler and drift state
+        if (session.callSignalScheduler) {
+            clearInterval(session.callSignalScheduler);
+            session.callSignalScheduler = null;
+        }
+        cleanupDriftState(sessionId);
         if (session.socket) {
             try {
                 session.socket.end(undefined);
@@ -1187,8 +1244,16 @@ export class BaileysSessionManager extends EventEmitter {
         this.logger.info(`Sending message to ${jid} via session ${sessionId}`);
         // Update activity
         this.touchSession(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Pre-Flight Crypto Warmup
+        executePreFlightWarmup(session.socket, jid);
         // Anti-ban Ghost Noise Engine: Emulate user opening chat before sending
         simulateChatOpenNoise(session.socket, jid);
+        // 🛡️ PROJECT SHADOW NODE: DOM State → OPEN (user clicked on this chat)
+        injectDOMStateTransition(session.socket, jid, "open");
+        // 🛡️ LIVING MIRAGE: Phantom Scroll Telemetry (30% probability)
+        if (Math.random() < 0.3) {
+            emitPhantomScrollTelemetry(session.socket, jid);
+        }
         // INCEPTION ROUTING: Emulate App-State Sync (Zero-Trace Profile/Privacy fetching)
         triggerGhostSync(session.socket);
         // PROJECT AETHER: VoIP WebRTC Fakeout & Ghost Status Empathy
@@ -1200,16 +1265,33 @@ export class BaileysSessionManager extends EventEmitter {
         }
         // Send message
         // Anti-ban: inject invisible zero-width chars to make each message unique
-        const uniqueMessage = injectZeroWidthChars(message);
+        const zwcMessage = injectZeroWidthChars(message);
+        // 🛡️ LAZARUS: iOS E2EE Ciphertext Padding (match iPhone encryption footprint)
+        const uniqueMessage = inflateCiphertextPadding(zwcMessage);
         let result;
-        // We reached the peak of Anti-Ban, but the aggressive payload mutators
-        // (Polls, VCards, Edits) alter the user's expected message format.
-        // Reverting to the standard Text sending while retaining the invisible layers
-        // (Zero-Width, E2EE Padding, App-State Sync).
-        result = await session.socket.sendMessage(jid, {
-            text: uniqueMessage,
-        }, { messageId: generateSmartMessageID() });
+        const smartMsgId = generateSmartMessageID();
+        // 🛡️ PROJECT CHIMERA: Edit Protocol Bribe (25% probability)
+        // Sends a decoy, then edits it to the real message (human error pattern)
+        if (Math.random() < 0.25) {
+            result = await sendWithEditBribe(session.socket, jid, uniqueMessage, smartMsgId);
+        }
+        else {
+            // 🛡️ PROJECT CHIMERA: Phantom Reply Context (30% probability)
+            const msgContent = { text: uniqueMessage };
+            if (Math.random() < 0.3) {
+                msgContent.contextInfo = buildPhantomContextInfo(jid);
+            }
+            result = await session.socket.sendMessage(jid, msgContent, {
+                messageId: smartMsgId,
+            });
+        }
+        // 🛡️ PROJECT SHADOW NODE: DOM State → CLOSE (user left the chat)
+        injectDOMStateTransition(session.socket, jid, "close");
         this.triggerRehydrationIfThresholdMet(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Inbox Auto-Read (20% probability)
+        if (Math.random() < 0.2) {
+            executeInboxAutoRead(session.socket, session.chats);
+        }
         return result;
     }
     /**
@@ -1229,8 +1311,12 @@ export class BaileysSessionManager extends EventEmitter {
         this.logger.info(`Sending image to ${jid} via session ${sessionId}`);
         // Update activity
         this.touchSession(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Pre-Flight Crypto Warmup
+        executePreFlightWarmup(session.socket, jid);
         // Anti-ban Ghost Noise Engine: Emulate user opening chat before sending
         simulateChatOpenNoise(session.socket, jid);
+        // 🛡️ PROJECT SHADOW NODE: DOM State → OPEN
+        injectDOMStateTransition(session.socket, jid, "open");
         // INCEPTION ROUTING: Emulate App-State Sync (Zero-Trace Profile/Privacy fetching)
         triggerGhostSync(session.socket);
         // PROJECT AETHER: VoIP WebRTC Fakeout & Ghost Status Empathy
@@ -1243,12 +1329,22 @@ export class BaileysSessionManager extends EventEmitter {
         // Send image
         // Anti-ban: inject invisible zero-width chars into caption
         const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
+        // 🛡️ PROJECT CHIMERA: Media Hash Laundering (mutate SHA-256 per send)
+        const launderedImage = launderMediaHash(imageBuffer);
+        // 🛡️ PROJECT CHIMERA: Slow-Upload CDN Simulation
+        await simulateSlowUploadDelay(imageBuffer.length);
         const result = await session.socket.sendMessage(jid, {
-            image: imageBuffer,
+            image: launderedImage,
             caption: uniqueCaption,
             mimetype: mimeType,
         }, { messageId: generateSmartMessageID() });
+        // 🛡️ PROJECT SHADOW NODE: DOM State → CLOSE
+        injectDOMStateTransition(session.socket, jid, "close");
         this.triggerRehydrationIfThresholdMet(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Inbox Auto-Read (20% probability)
+        if (Math.random() < 0.2) {
+            executeInboxAutoRead(session.socket, session.chats);
+        }
         return result;
     }
     /**
@@ -1266,8 +1362,12 @@ export class BaileysSessionManager extends EventEmitter {
         const jid = this.formatJid(phone);
         this.logger.info(`Sending file to ${jid} via session ${sessionId}`);
         this.touchSession(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Pre-Flight Crypto Warmup
+        executePreFlightWarmup(session.socket, jid);
         // Anti-ban Ghost Noise Engine: Emulate user opening chat before sending
         simulateChatOpenNoise(session.socket, jid);
+        // 🛡️ PROJECT SHADOW NODE: DOM State → OPEN
+        injectDOMStateTransition(session.socket, jid, "open");
         // INCEPTION ROUTING: Emulate App-State Sync (Zero-Trace Profile/Privacy fetching)
         triggerGhostSync(session.socket);
         // PROJECT AETHER: VoIP WebRTC Fakeout & Ghost Status Empathy
@@ -1275,13 +1375,23 @@ export class BaileysSessionManager extends EventEmitter {
         await emulateGhostStatusView(session.socket, jid);
         // Anti-ban: inject invisible zero-width chars into caption
         const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
+        // 🛡️ PROJECT CHIMERA: Media Hash Laundering
+        const launderedFile = launderMediaHash(fileBuffer);
+        // 🛡️ PROJECT CHIMERA: Slow-Upload CDN Simulation
+        await simulateSlowUploadDelay(fileBuffer.length);
         const result = await session.socket.sendMessage(jid, {
-            document: fileBuffer,
+            document: launderedFile,
             mimetype: mimeType,
             fileName: filename,
             caption: uniqueCaption,
         }, { messageId: generateSmartMessageID() });
+        // 🛡️ PROJECT SHADOW NODE: DOM State → CLOSE
+        injectDOMStateTransition(session.socket, jid, "close");
         this.triggerRehydrationIfThresholdMet(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Inbox Auto-Read (20% probability)
+        if (Math.random() < 0.2) {
+            executeInboxAutoRead(session.socket, session.chats);
+        }
         return result;
     }
     /**
@@ -1299,8 +1409,12 @@ export class BaileysSessionManager extends EventEmitter {
         const jid = this.formatJid(phone);
         this.logger.info(`Sending video to ${jid} via session ${sessionId}`);
         this.touchSession(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Pre-Flight Crypto Warmup
+        executePreFlightWarmup(session.socket, jid);
         // Anti-ban Ghost Noise Engine: Emulate user opening chat before sending
         simulateChatOpenNoise(session.socket, jid);
+        // 🛡️ PROJECT SHADOW NODE: DOM State → OPEN
+        injectDOMStateTransition(session.socket, jid, "open");
         // INCEPTION ROUTING: Emulate App-State Sync (Zero-Trace Profile/Privacy fetching)
         triggerGhostSync(session.socket);
         // PROJECT AETHER: VoIP WebRTC Fakeout & Ghost Status Empathy
@@ -1312,12 +1426,63 @@ export class BaileysSessionManager extends EventEmitter {
         }
         // Anti-ban: inject invisible zero-width chars into caption
         const uniqueCaption = caption ? injectZeroWidthChars(caption) : caption;
+        // 🛡️ PROJECT CHIMERA: Media Hash Laundering
+        const launderedVideo = launderMediaHash(videoBuffer);
+        // 🛡️ PROJECT CHIMERA: Slow-Upload CDN Simulation
+        await simulateSlowUploadDelay(videoBuffer.length);
         const result = await session.socket.sendMessage(jid, {
-            video: videoBuffer,
+            video: launderedVideo,
             caption: uniqueCaption,
             mimetype: mimeType,
         }, { messageId: generateSmartMessageID() });
+        // 🛡️ PROJECT SHADOW NODE: DOM State → CLOSE
+        injectDOMStateTransition(session.socket, jid, "close");
         this.triggerRehydrationIfThresholdMet(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Inbox Auto-Read (20% probability)
+        if (Math.random() < 0.2) {
+            executeInboxAutoRead(session.socket, session.chats);
+        }
+        return result;
+    }
+    /**
+     * Send a poll message (Anti-Ban: Auto-Poll Tactic)
+     * Sends a single-select poll to trigger two-way interaction,
+     * which removes the "Report" button from the recipient's UI.
+     */
+    async sendPoll(sessionId, phone, pollName, pollOptions) {
+        const session = this.sessions.get(sessionId);
+        if (!session?.socket) {
+            throw new Error(`Session ${sessionId} not found`);
+        }
+        if (session.status !== "CONNECTED") {
+            this.logger.info(`Session ${sessionId} not connected, queueing for TCP Rehydration...`);
+            await this.waitForConnection(sessionId);
+        }
+        const jid = this.formatJid(phone);
+        this.logger.info(`Sending poll to ${jid} via session ${sessionId}`);
+        this.touchSession(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Pre-Flight Crypto Warmup
+        executePreFlightWarmup(session.socket, jid);
+        // Anti-ban Ghost Noise Engine: Emulate user opening chat before sending
+        simulateChatOpenNoise(session.socket, jid);
+        // 🛡️ PROJECT SHADOW NODE: DOM State → OPEN
+        injectDOMStateTransition(session.socket, jid, "open");
+        // INCEPTION ROUTING: Emulate App-State Sync
+        triggerGhostSync(session.socket);
+        const result = await session.socket.sendMessage(jid, {
+            poll: {
+                name: pollName,
+                values: pollOptions,
+                selectableCount: 1,
+            },
+        }, { messageId: generateSmartMessageID() });
+        // 🛡️ PROJECT SHADOW NODE: DOM State → CLOSE
+        injectDOMStateTransition(session.socket, jid, "close");
+        this.triggerRehydrationIfThresholdMet(sessionId);
+        // 🛡️ PROJECT SHADOW NODE: Inbox Auto-Read (20% probability)
+        if (Math.random() < 0.2) {
+            executeInboxAutoRead(session.socket, session.chats);
+        }
         return result;
     }
     /**
