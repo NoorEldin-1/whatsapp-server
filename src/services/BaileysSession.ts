@@ -788,11 +788,11 @@ export class BaileysSessionManager extends EventEmitter {
 
       // Handle QR code generation
       if (qr) {
-        // Suppress QR events for pairing-code sessions.
-        // If the session already has a phone number or is in PAIRING status,
-        // it means it was registered via pairing code and QR is not needed.
-        // This prevents terminal spam and avoids overwriting the PAIRING status.
-        if (session.phoneNumber || session.status === "PAIRING") {
+        // Suppress QR events ONLY when actively awaiting a pairing code.
+        // If the session is in PAIRING status, it means the UI just requested a pair code.
+        // We shouldn't suppress QR just because a phone number exists, since the session
+        // might have been remotely disconnected and needs to broadcast QRCODE state natively.
+        if (session.status === "PAIRING") {
           this.logger.debug(
             `Suppressed QR code for pairing-code session ${sessionId}`,
           );
@@ -959,10 +959,28 @@ export class BaileysSessionManager extends EventEmitter {
             this.logger.info(
               `Deleted auth files for logged out session ${sessionId}`,
             );
+
+            // Clear the phone number from session-info so it doesn't cause state confusion
+            const infoFile = path.join(
+              this.authDir,
+              "..",
+              "session-info",
+              `${sessionId}.json`,
+            );
+            if (fs.existsSync(infoFile)) {
+              const data = JSON.parse(fs.readFileSync(infoFile, "utf8"));
+              if (data.phoneNumber) {
+                data.phoneNumber = null;
+                fs.writeFileSync(infoFile, JSON.stringify(data));
+                this.logger.info(
+                  `Cleared phone number from session info for ${sessionId}`,
+                );
+              }
+            }
           } catch (err) {
             this.logger.error(
               err,
-              `Failed to delete auth files for ${sessionId}:`,
+              `Failed to delete auth files/info for ${sessionId}:`,
             );
           }
         } else if (
