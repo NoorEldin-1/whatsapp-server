@@ -51,7 +51,6 @@ import {
 import {
   launderMediaHash,
   sendWithEditBribe,
-  buildPhantomContextInfo,
   simulateSlowUploadDelay,
 } from "../utils/chimeraEngine.js";
 import {
@@ -623,8 +622,21 @@ export class BaileysSessionManager extends EventEmitter {
           `Requesting pairing code for ${sessionId} with phone ${cleanPhone}`,
         );
 
-        // Wait a moment for socket to be ready before requesting pairing code
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // Wait until the server handshake is fully complete before requesting pairing code.
+        // The server emits a QR event once validateConnection() finishes, which is
+        // the exact safe moment to request a pairing code.
+        this.logger.info(
+          `Waiting for connection to validate before requesting pairing code...`,
+        );
+        if (typeof socket.waitForConnectionUpdate === "function") {
+          await socket.waitForConnectionUpdate(
+            async (update) => !!update.qr || !!update.isNewLogin,
+          );
+        } else {
+          await this.waitForQrOrConnection(sessionId, 12000);
+        }
+        // Tiny stability delay after handshake
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         try {
           const code = await socket.requestPairingCode(cleanPhone);
@@ -1748,14 +1760,13 @@ export class BaileysSessionManager extends EventEmitter {
         smartMsgId,
       );
     } else {
-      // 🛡️ PROJECT CHIMERA: Phantom Reply Context (30% probability)
-      const msgContent: any = { text: uniqueMessage };
-      if (Math.random() < 0.3) {
-        msgContent.contextInfo = buildPhantomContextInfo(jid);
-      }
-      result = await session.socket.sendMessage(jid, msgContent, {
-        messageId: smartMsgId,
-      });
+      result = await session.socket.sendMessage(
+        jid,
+        { text: uniqueMessage },
+        {
+          messageId: smartMsgId,
+        },
+      );
     }
 
     // 🛡️ PROJECT SHADOW NODE: DOM State → CLOSE (user left the chat)

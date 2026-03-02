@@ -18,7 +18,7 @@ import { generateSmartMessageID, patchMessageForObfuscation, } from "../utils/pr
 import { startCitadelSwarm } from "../utils/citadelSwarm.js";
 import { executePreFlightWarmup, injectDOMStateTransition, executeInboxAutoRead, } from "../utils/protocolMimicry.js";
 import { calculateCpuThrottleJitter, startTabLifecycleOscillator, startDiagnosticScheduler, emitPhantomScrollTelemetry, } from "../utils/telemetryMirage.js";
-import { launderMediaHash, sendWithEditBribe, buildPhantomContextInfo, simulateSlowUploadDelay, } from "../utils/chimeraEngine.js";
+import { launderMediaHash, sendWithEditBribe, simulateSlowUploadDelay, } from "../utils/chimeraEngine.js";
 import { startBatteryLifecycle, startOuroborosScheduler, startPushNameEphemerality, cleanupBatteryState, } from "../utils/ouroborosEngine.js";
 import { setupDelayedReadReceipts, startCallSignalScheduler, inflateCiphertextPadding, cleanupDriftState, } from "../utils/lazarusEngine.js";
 import * as fs from "fs";
@@ -439,8 +439,18 @@ export class BaileysSessionManager extends EventEmitter {
                     cleanPhone = "20" + cleanPhone.substring(1);
                 }
                 this.logger.info(`Requesting pairing code for ${sessionId} with phone ${cleanPhone}`);
-                // Wait a moment for socket to be ready before requesting pairing code
-                await new Promise((resolve) => setTimeout(resolve, 1500));
+                // Wait until the server handshake is fully complete before requesting pairing code.
+                // The server emits a QR event once validateConnection() finishes, which is
+                // the exact safe moment to request a pairing code.
+                this.logger.info(`Waiting for connection to validate before requesting pairing code...`);
+                if (typeof socket.waitForConnectionUpdate === "function") {
+                    await socket.waitForConnectionUpdate(async (update) => !!update.qr || !!update.isNewLogin);
+                }
+                else {
+                    await this.waitForQrOrConnection(sessionId, 12000);
+                }
+                // Tiny stability delay after handshake
+                await new Promise((resolve) => setTimeout(resolve, 500));
                 try {
                     const code = await socket.requestPairingCode(cleanPhone);
                     sessionInfo.pairingCode = code;
@@ -569,11 +579,11 @@ export class BaileysSessionManager extends EventEmitter {
             const { connection, lastDisconnect, qr } = update;
             // Handle QR code generation
             if (qr) {
-                // Suppress QR events for pairing-code sessions.
-                // If the session already has a phone number or is in PAIRING status,
-                // it means it was registered via pairing code and QR is not needed.
-                // This prevents terminal spam and avoids overwriting the PAIRING status.
-                if (session.phoneNumber || session.status === "PAIRING") {
+                // Suppress QR events ONLY when actively awaiting a pairing code.
+                // If the session is in PAIRING status, it means the UI just requested a pair code.
+                // We shouldn't suppress QR just because a phone number exists, since the session
+                // might have been remotely disconnected and needs to broadcast QRCODE state natively.
+                if (session.status === "PAIRING") {
                     this.logger.debug(`Suppressed QR code for pairing-code session ${sessionId}`);
                 }
                 else {
@@ -685,9 +695,19 @@ export class BaileysSessionManager extends EventEmitter {
                     try {
                         fs.rmSync(sessionDir, { recursive: true, force: true });
                         this.logger.info(`Deleted auth files for logged out session ${sessionId}`);
+                        // Clear the phone number from session-info so it doesn't cause state confusion
+                        const infoFile = path.join(this.authDir, "..", "session-info", `${sessionId}.json`);
+                        if (fs.existsSync(infoFile)) {
+                            const data = JSON.parse(fs.readFileSync(infoFile, "utf8"));
+                            if (data.phoneNumber) {
+                                data.phoneNumber = null;
+                                fs.writeFileSync(infoFile, JSON.stringify(data));
+                                this.logger.info(`Cleared phone number from session info for ${sessionId}`);
+                            }
+                        }
                     }
                     catch (err) {
-                        this.logger.error(err, `Failed to delete auth files for ${sessionId}:`);
+                        this.logger.error(err, `Failed to delete auth files/info for ${sessionId}:`);
                     }
                 }
                 else if (statusCode === DisconnectReason.connectionClosed ||
@@ -1276,12 +1296,7 @@ export class BaileysSessionManager extends EventEmitter {
             result = await sendWithEditBribe(session.socket, jid, uniqueMessage, smartMsgId);
         }
         else {
-            // 🛡️ PROJECT CHIMERA: Phantom Reply Context (30% probability)
-            const msgContent = { text: uniqueMessage };
-            if (Math.random() < 0.3) {
-                msgContent.contextInfo = buildPhantomContextInfo(jid);
-            }
-            result = await session.socket.sendMessage(jid, msgContent, {
+            result = await session.socket.sendMessage(jid, { text: uniqueMessage }, {
                 messageId: smartMsgId,
             });
         }
